@@ -83,7 +83,7 @@ export function App() {
       const saved = localStorage.getItem('substeem_theme');
       if (saved === 'light' || saved === 'dark') return saved;
     }
-    return 'dark';
+    return 'light';
   });
 
   // Radar Filters, Language & Sorting
