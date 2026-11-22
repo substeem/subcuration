@@ -2,9 +2,11 @@
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "subcuration",
   "compatibility_date": "2026-03-01",
+  "build": {
+    "command": "npm run build"
+  },
   "assets": {
     "directory": "./dist",
-    "binding": "ASSETS",
     "html_handling": "auto-trailing-slash",
     "not_found_handling": "single-page-application"
   }
