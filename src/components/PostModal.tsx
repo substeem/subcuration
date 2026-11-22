@@ -62,6 +62,8 @@ function normalizeSteemBody(raw: string): string {
   if (!raw) return '';
   return raw
     .replace(/\r\n/g, '\n')
+    // Upgrade insecure http image CDNs to https so browsers don't block mixed content
+    .replace(/http:\/\/(cdn\.steemitimages\.com|steemitimages\.com|images\.hive\.blog|images\.ecency\.com|i\.imgur\.com|files\.peakd\.com)/gi, 'https://$1')
     // Collapse 3+ consecutive newlines so raw Steem spacing doesn't create empty voids
     .replace(/\n{3,}/g, '\n\n')
     // Convert bare image URL inside <center>...</center> into HTML images
@@ -172,14 +174,15 @@ export function SteemPostBody({ body }: { body?: string }) {
           rehypePlugins={[rehypeRaw, [rehypeSanitize, steemSanitizeSchema]]}
           components={{
             img: ({ src = '', alt = '' }) => {
+              const secureSrc = src.startsWith('http://') ? src.replace(/^http:\/\//i, 'https://') : src;
               return (
                 <img
-                  src={src}
+                  src={secureSrc}
                   alt={alt}
                   loading="lazy"
                   decoding="async"
                   onClick={() => {
-                    if (src) window.open(src, '_blank', 'noopener,noreferrer');
+                    if (secureSrc) window.open(secureSrc, '_blank', 'noopener,noreferrer');
                   }}
                   title="Click to view full-resolution image in new tab"
                   className="max-h-[500px] w-auto max-w-full rounded-xl object-contain my-3 mx-auto shadow-xs cursor-zoom-in hover:opacity-95 transition-opacity"

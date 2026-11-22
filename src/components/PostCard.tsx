@@ -21,7 +21,6 @@ import {
   extractPlainExcerpt,
   formatRelativeSteemTime,
   extractPostImages,
-  getProxiedThumbnail,
   formatSteemReputation,
 } from '../lib/textUtils';
 import { buildCleanSteemUrl } from '../lib/reportGenerator';
@@ -124,22 +123,21 @@ export const PostCard: React.FC<PostCardProps> = ({
   );
   const hasAuthorImages = images.length > 0;
   const [imgIndex, setImgIndex] = useState(0);
-  const [useProxy, setUseProxy] = useState(true);
   const [isFallbackActive, setIsFallbackActive] = useState(!hasAuthorImages);
+  const [isLoaded, setIsLoaded] = useState(false);
 
   useEffect(() => {
     setImgIndex(0);
-    setUseProxy(true);
     setIsFallbackActive(!hasAuthorImages);
+    setIsLoaded(false);
   }, [post.author, post.permlink, hasAuthorImages]);
 
   const activeImageUrl = useMemo(() => {
     if (isFallbackActive || !hasAuthorImages || imgIndex >= images.length) {
       return DEFAULT_POST_FALLBACK_IMAGE;
     }
-    const current = images[imgIndex];
-    return useProxy ? getProxiedThumbnail(current) : current;
-  }, [isFallbackActive, hasAuthorImages, imgIndex, images, useProxy]);
+    return images[imgIndex];
+  }, [isFallbackActive, hasAuthorImages, imgIndex, images]);
 
   // Human-readable community name with fallback to #category
   const communityLabel = post.communityTitle || `#${post.category}`;
@@ -179,24 +177,29 @@ export const PostCard: React.FC<PostCardProps> = ({
         title="Inspect post in Curation Hub"
         className="relative h-44 w-full shrink-0 overflow-hidden bg-slate-100 dark:bg-slate-800 cursor-pointer"
       >
+        {!isLoaded && (
+          <div className="absolute inset-0 bg-slate-200/60 dark:bg-slate-800/60 animate-pulse" />
+        )}
         <img
+          key={activeImageUrl}
           src={activeImageUrl}
           alt={post.title}
           loading="lazy"
           decoding="async"
-          className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-[1.03]"
-          onError={() => {
+          onLoad={() => setIsLoaded(true)}
+          onError={(e) => {
             if (isFallbackActive) return;
-            // Try direct unproxied URL first if proxy failed, else advance candidate index
-            if (useProxy && images[imgIndex]) {
-              setUseProxy(false);
-            } else if (imgIndex < images.length - 1) {
-              setUseProxy(true);
+            // Advance to next candidate if available, else switch to guaranteed mascot fallback
+            if (imgIndex < images.length - 1) {
               setImgIndex((prev) => prev + 1);
             } else {
               setIsFallbackActive(true);
+              e.currentTarget.src = DEFAULT_POST_FALLBACK_IMAGE;
             }
           }}
+          className={`h-full w-full object-cover transition-all duration-300 group-hover:scale-[1.03] ${
+            isLoaded ? 'opacity-100' : 'opacity-0'
+          }`}
         />
         {!isFallbackActive && images.length > 1 && (
           <span className="absolute right-2.5 bottom-2.5 rounded-md bg-slate-950/75 px-1.5 py-0.5 text-[11px] font-medium tabular-nums text-white backdrop-blur-xs">

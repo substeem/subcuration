@@ -190,7 +190,11 @@ export function extractPostImages(post: {
 
   for (const item of metaImages) {
     if (typeof item === 'string' && /^https?:\/\//i.test(item.trim())) {
-      candidates.push(item.trim());
+      let url = item.trim();
+      if (url.startsWith('http://')) {
+        url = url.replace(/^http:\/\//i, 'https://');
+      }
+      candidates.push(url);
     }
   }
 
@@ -205,8 +209,13 @@ export function extractPostImages(post: {
 
   for (const regex of patterns) {
     for (const match of body.matchAll(regex)) {
-      const url = (match[1] ?? match[0]).trim();
-      if (url) candidates.push(url);
+      let url = (match[1] ?? match[0]).trim();
+      if (url) {
+        if (url.startsWith('http://')) {
+          url = url.replace(/^http:\/\//i, 'https://');
+        }
+        candidates.push(url);
+      }
     }
   }
 
@@ -218,8 +227,17 @@ export function extractPostImages(post: {
     }
   }
 
+  // Filter out any known non-image metadata URLs (e.g. accidental profile or feed links)
+  const validCandidates = candidates.filter((url) => {
+    const lower = url.toLowerCase();
+    if (lower.includes('steemit.com/@') || lower.includes('steemit.com/trending') || lower.includes('steemit.com/created')) {
+      return false;
+    }
+    return true;
+  });
+
   // Deduplicate while preserving order
-  return [...new Set(candidates)];
+  return [...new Set(validCandidates)];
 }
 
 /**
