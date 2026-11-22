@@ -48,8 +48,8 @@ Zero backend, zero database, zero hosting overhead—100% powered by the Steem b
 ### Installation & Development
 ```bash
 # Clone the repository
-git clone https://github.com/substeem/substeem.git
-cd substeem
+git clone https://github.com/substeem/subcuration.git
+cd subcuration
 
 # Install dependencies
 npm install
