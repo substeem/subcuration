@@ -231,18 +231,13 @@ export function detectVideoPost(body?: string): boolean {
 }
 
 /**
- * Routes thumbnail images through Steemit's resizing image proxy (640x0)
- * so large mobile phone uploads load reliably and bypass CORS/hotlink drops.
- * Skips hosts known to fail through the Steemit proxy (Blurt 307 redirects, YouTube CDN).
+ * Returns thumbnail image URLs cleanly and directly.
+ * Skips broken proxy wrappers (such as obsolete steemitimages.com/640x0/ endpoints that return 404 JSON).
+ * Local assets (/...) are served directly from edge CDN cache.
  */
-export function getProxiedThumbnail(url: string, width = 640): string {
+export function getProxiedThumbnail(url: string, _width = 640): string {
   if (!url) return '';
-  if (url.includes('img.youtube.com')) return url;
-  if (url.includes('blurt-rpc.saboin.com') || url.includes('media.blurt.blog')) return url;
-  if (/^https?:\/\/(?:cdn\.)?steemitimages\.com\/\d+x\d+\//i.test(url)) {
-    return url;
-  }
-  return `https://steemitimages.com/${width}x0/${url}`;
+  return url;
 }
 
 /**

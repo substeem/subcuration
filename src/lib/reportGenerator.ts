@@ -1,4 +1,9 @@
-import { ALL_CURATOR_MEMBERS, isDiaryPost, OLO_CURATION_HUB_LOGO, DEFAULT_POST_FALLBACK_IMAGE } from './constants';
+import {
+  ALL_CURATOR_MEMBERS,
+  isDiaryPost,
+  STEEM_REPORT_LOGO_URL,
+  STEEM_REPORT_FALLBACK_IMAGE,
+} from './constants';
 import type { PostItem } from '../types';
 import { extractPostImages, formatSteemReputation } from './textUtils';
 
@@ -135,7 +140,7 @@ export function generateSteemPodReport(config: ReportConfig): string {
   const clubTotal = c100 + c75 + c5050 + cless || totalVotes || 1;
 
   // ==================== REPORT MARKDOWN BUILDER ====================
-  let md = `<center>![Olo Curation Hub Logo](${OLO_CURATION_HUB_LOGO})</center>\n\n`;
+  let md = `<center>![Olo Curation Hub Logo](${STEEM_REPORT_LOGO_URL})</center>\n\n`;
   md += `# <center>🏆 Community Curation Weekly Report: ${teamName} (@${account})</center>\n`;
   md += `### <center>📅 Week #${weekNumber} — ${monthName} ${year}</center>\n\n`;
   md += `<center>**Curator Shift Roster:** ${curatorMembers.map((m) => `@${m}`).join(', ')}</center>\n\n`;
@@ -227,7 +232,7 @@ export function generateSteemPodReport(config: ReportConfig): string {
         body: pick.post.body,
         json_metadata: pick.post.json_metadata,
       });
-      const coverUrl = images[0] || DEFAULT_POST_FALLBACK_IMAGE;
+      const coverUrl = images[0] || STEEM_REPORT_FALLBACK_IMAGE;
 
       md += `<center>![${escapeTableCell(pick.post.title)}](${coverUrl})</center>\n\n`;
       md += `### Selection #${idx + 1}: [${escapeTableCell(pick.post.title)}](${cleanUrl})\n\n`;

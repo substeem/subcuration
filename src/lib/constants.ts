@@ -279,10 +279,14 @@ export function isDiaryPost(post: {
   return DIARY_KEYWORDS.some((kw) => haystack.includes(kw));
 }
 
-export const DEFAULT_POST_FALLBACK_IMAGE =
+export const DEFAULT_POST_FALLBACK_IMAGE = '/olo-fallback.png';
+
+export const OLO_CURATION_HUB_LOGO = '/olo-logo.png';
+
+export const STEEM_REPORT_FALLBACK_IMAGE =
   'https://cdn.steemitimages.com/DQmWGTjAfCSSCG7B3Gff3z4r2Z65HRvRCFscxao3suBnCEc/Just_Olo_Here_No_Image.png';
 
-export const OLO_CURATION_HUB_LOGO =
+export const STEEM_REPORT_LOGO_URL =
   'https://cdn.steemitimages.com/DQmTfV2CJGSFzFMzpgND8eGT4CFBZKNRucAEBYb8To56fyf/Olo_Curation_Hub_v3.png';
 
 export const SUBSTEEM_PROTOCOL_ID = 'substeem_curation';

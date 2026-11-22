@@ -158,20 +158,13 @@ export function SteemPostBody({ body }: { body?: string }) {
           rehypePlugins={[rehypeRaw, [rehypeSanitize, steemSanitizeSchema]]}
           components={{
             img: ({ src = '', alt = '' }) => {
-              const proxied = /^https?:\/\/(?:cdn\.)?steemitimages\.com\/\d+x\d+\//i.test(src)
-                ? src
-                : `https://steemitimages.com/800x0/${src}`;
               return (
                 <img
-                  src={proxied}
+                  src={src}
                   alt={alt}
                   loading="lazy"
+                  decoding="async"
                   className="max-h-[440px] w-auto max-w-full rounded-xl object-contain my-3 mx-auto shadow-xs"
-                  onError={(e) => {
-                    if (src && e.currentTarget.src !== src) {
-                      e.currentTarget.src = src;
-                    }
-                  }}
                 />
               );
             },
