@@ -72,6 +72,8 @@ export interface PostItem {
   isSteemExclusive?: boolean;
   isVideoPost?: boolean;
   language?: string;
+  isComment?: boolean;
+  parentAuthor?: string;
 }
 
 export interface CurationReachSummary {

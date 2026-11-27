@@ -38,9 +38,10 @@ import {
 } from '../lib/reportGenerator';
 import {
   fetchCurationIntelligence,
-  fetchTeamOnChainCuratedPosts,
+  fetchTeamOnChainCurationData,
   fetchPostBySteemUrl,
 } from '../lib/steem';
+import { getCachedClubStatus } from '../lib/clubCalculator';
 import { formatSteemReputation, extractPostImages } from '../lib/textUtils';
 
 const reportSanitizeSchema = {
@@ -98,8 +99,14 @@ export const ReportView: React.FC<ReportViewProps> = ({
   const [generating, setGenerating] = useState(false);
   const [outputTab, setOutputTab] = useState<'preview' | 'raw'>('preview');
 
-  // On-chain 7-day curated posts for the selected team
+  // On-chain 7-day curated posts & ledger metrics for the selected team
   const [onChainCandidates, setOnChainCandidates] = useState<PostItem[]>([]);
+  const [onChainAllItems, setOnChainAllItems] = useState<PostItem[]>([]);
+  const [onChainCommentsCount, setOnChainCommentsCount] = useState(0);
+  const [onChainMentorship, setOnChainMentorship] = useState<{
+    feedbackCommentsCount: number;
+    uniqueAuthorsGuided: number;
+  }>({ feedbackCommentsCount: 0, uniqueAuthorsGuided: 0 });
   const [loadingCandidates, setLoadingCandidates] = useState(false);
 
   // Candidate search & URL input
@@ -131,12 +138,18 @@ export const ReportView: React.FC<ReportViewProps> = ({
     [selectedTeamId]
   );
 
-  // Fetch actual 7-day on-chain votes cast by this team's curation account
+  // Fetch complete 7-day on-chain votes & feedback comments cast by this team's curation account
   const loadTeamCuratedPosts = useCallback(async (account: string) => {
     setLoadingCandidates(true);
     try {
-      const results = await fetchTeamOnChainCuratedPosts(account, 7, 30);
-      setOnChainCandidates(results);
+      const data = await fetchTeamOnChainCurationData(account, 7, 500);
+      setOnChainCandidates(data.posts);
+      setOnChainAllItems(data.items);
+      setOnChainCommentsCount(data.commentsCount);
+      setOnChainMentorship({
+        feedbackCommentsCount: data.feedbackCommentsCount,
+        uniqueAuthorsGuided: data.uniqueAuthorsGuided,
+      });
     } catch (err) {
       console.warn(`Failed to fetch 7-day on-chain votes for ${account}:`, err);
     } finally {
@@ -372,16 +385,26 @@ export const ReportView: React.FC<ReportViewProps> = ({
         }
       }
 
-      // Include all curated posts from on-chain history + feed + explicitly picked Top 7
-      const verifiedPostMap = new Map<number, PostItem>();
-      for (const p of onChainCandidates) verifiedPostMap.set(p.id, p);
-      for (const p of feedTeamVotedPosts) verifiedPostMap.set(p.id, p);
-      for (const pick of top7) verifiedPostMap.set(pick.post.id, pick.post);
+      // Include all curated items (posts + comments) from 7-day on-chain history + feed + Top 7
+      const verifiedPostMap = new Map<string, PostItem>();
+      const addItem = (p: PostItem) => {
+        const key = `${p.author.toLowerCase()}/${p.permlink}`;
+        if (!verifiedPostMap.has(key)) verifiedPostMap.set(key, p);
+      };
+      for (const p of onChainAllItems) addItem(p);
+      for (const p of feedTeamVotedPosts) addItem(p);
+      for (const pick of top7) addItem(pick.post);
 
-      // Auto-compute club distribution from verified posts
+      // Auto-compute club distribution from cached audits or post tags
       let club100 = 0, club75 = 0, club5050 = 0, clubless = 0;
       for (const p of verifiedPostMap.values()) {
-        const tier = p.clubStatus?.tier;
+        let tier = p.clubStatus?.tier || getCachedClubStatus(p.author)?.tier;
+        if (!tier && Array.isArray(p.tags)) {
+          const lowerTags = p.tags.map((t) => String(t).toLowerCase());
+          if (lowerTags.includes('club100')) tier = 'Club100';
+          else if (lowerTags.includes('club75')) tier = 'Club75';
+          else if (lowerTags.includes('club5050')) tier = 'Club5050';
+        }
         if (tier === 'Club100') club100++;
         else if (tier === 'Club75') club75++;
         else if (tier === 'Club5050') club5050++;
@@ -398,6 +421,7 @@ export const ReportView: React.FC<ReportViewProps> = ({
         topSevenPicks: top7,
         allCuratedPosts: Array.from(verifiedPostMap.values()),
         mentoredPosts: mentoredEntries,
+        onChainMentorship,
         reachMetrics,
         clubDistribution: {
           club100,
@@ -667,7 +691,7 @@ export const ReportView: React.FC<ReportViewProps> = ({
                 )}
               </h4>
               <span className="text-xs font-medium text-slate-500 dark:text-slate-400 font-mono">
-                @{team.account} ({onChainCandidates.length} on-chain votes)
+                @{team.account} ({onChainCandidates.length} posts · {onChainCommentsCount} comments in 7d)
               </span>
             </div>
 
@@ -792,15 +816,22 @@ export const ReportView: React.FC<ReportViewProps> = ({
 
                       <button
                         type="button"
-                        onClick={() => handleSelectPostForTop7(post)}
-                        disabled={isSelected || top7.length >= 7}
+                        onClick={() =>
+                          isSelected ? handleRemoveTop7(post.id) : handleSelectPostForTop7(post)
+                        }
+                        disabled={!isSelected && top7.length >= 7}
+                        title={
+                          isSelected
+                            ? 'Click to withdraw from Top 7 selections'
+                            : 'Add to Top 7 selections'
+                        }
                         className={`shrink-0 rounded-lg px-2.5 py-1 text-xs font-semibold transition-colors disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer ${
                           isSelected
-                            ? 'border border-emerald-600/40 bg-emerald-100 text-emerald-900 dark:border-emerald-500/40 dark:bg-emerald-950/60 dark:text-emerald-300'
+                            ? 'border border-emerald-600/40 bg-emerald-100 text-emerald-900 hover:border-rose-400 hover:bg-rose-50 hover:text-rose-800 dark:border-emerald-500/40 dark:bg-emerald-950/60 dark:text-emerald-300 dark:hover:border-rose-500/50 dark:hover:bg-rose-950/60 dark:hover:text-rose-300'
                             : 'border border-emerald-600/30 bg-emerald-50 text-emerald-800 hover:bg-emerald-700 hover:text-white dark:border-emerald-500/40 dark:bg-emerald-950/60 dark:text-emerald-300 dark:hover:bg-emerald-500 dark:hover:text-slate-950'
                         }`}
                       >
-                        {isSelected ? 'Selected' : '+ Top 7'}
+                        {isSelected ? 'Selected ✕' : '+ Top 7'}
                       </button>
                     </div>
                   );

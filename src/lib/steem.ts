@@ -86,6 +86,110 @@ export async function safeCall<T = any>(
 }
 
 /**
+ * Executes a JSON-RPC 2.0 batch array against RPC_NODES with failover.
+ */
+async function batchRpcCall<T = any>(
+  requests: { method: string; params: any[] | Record<string, any> }[],
+  chunkSize = 40
+): Promise<(T | null)[]> {
+  if (requests.length === 0) return [];
+  const results: (T | null)[] = new Array(requests.length).fill(null);
+
+  for (let offset = 0; offset < requests.length; offset += chunkSize) {
+    const chunk = requests.slice(offset, offset + chunkSize);
+    const payload = chunk.map((r, idx) => ({
+      jsonrpc: '2.0',
+      method: r.method,
+      params: r.params,
+      id: idx + 1,
+    }));
+
+    let succeeded = false;
+    for (let attempt = 0; attempt < RPC_NODES.length; attempt++) {
+      const nodeUrl = RPC_NODES[currentRpcIndex];
+      try {
+        const res = await fetch(nodeUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const json = await res.json();
+        if (!Array.isArray(json)) throw new Error('Expected JSON-RPC batch array response');
+
+        for (const entry of json) {
+          if (entry && typeof entry.id === 'number' && !entry.error) {
+            results[offset + entry.id - 1] = entry.result as T;
+          }
+        }
+        succeeded = true;
+        break;
+      } catch (err) {
+        console.warn(`Batch RPC failed on ${nodeUrl}:`, err);
+        currentRpcIndex = (currentRpcIndex + 1) % RPC_NODES.length;
+      }
+    }
+
+    if (!succeeded) {
+      const fallback = await Promise.allSettled(
+        chunk.map((r) => safeCall<T>(r.method, r.params))
+      );
+      fallback.forEach((res, idx) => {
+        if (res.status === 'fulfilled') results[offset + idx] = res.value;
+      });
+    }
+  }
+
+  return results;
+}
+
+/**
+ * Pages backwards through condenser_api.get_account_history in compliant batches of <= 100
+ * operations until cutoffMs is reached (avoids api.steemit.com's 100-op upper limit error).
+ */
+async function fetchAccountHistoryWindow(
+  account: string,
+  cutoffMs: number,
+  maxBatches = 25
+): Promise<[number, any][]> {
+  const entries: [number, any][] = [];
+  const seenSeq = new Set<number>();
+  let start = -1;
+
+  for (let batch = 0; batch < maxBatches; batch++) {
+    const batchLimit = start === -1 ? 100 : Math.min(100, start);
+    if (batchLimit <= 0) break;
+
+    const history = await safeCall<any[]>('condenser_api.get_account_history', [
+      account,
+      start,
+      batchLimit,
+    ]);
+    if (!Array.isArray(history) || history.length === 0) break;
+
+    let reachedCutoff = false;
+    for (let i = history.length - 1; i >= 0; i--) {
+      const [seq, item] = history[i];
+      if (seenSeq.has(seq)) continue;
+      seenSeq.add(seq);
+
+      const ts = Date.parse(`${item.timestamp}Z`);
+      if (!Number.isNaN(ts) && ts < cutoffMs) {
+        reachedCutoff = true;
+        break;
+      }
+      entries.push([seq, item]);
+    }
+
+    const firstSeq = history[0][0];
+    if (reachedCutoff || firstSeq <= 0) break;
+    start = firstSeq - 1;
+  }
+
+  return entries;
+}
+
+/**
  * Resolves raw Steem community IDs (e.g. hive-144064) to human-readable titles
  * via bridge.get_community with 24h localStorage caching.
  */
@@ -200,12 +304,21 @@ function mapRawDiscussionToPostItem(
     json_metadata: p.json_metadata,
   });
 
+  const parentAuthor = typeof p.parent_author === 'string' ? p.parent_author.trim() : '';
+  const isComment = Boolean(parentAuthor) || Number(p.depth || 0) > 0;
+  const resolvedTitle =
+    p.title && String(p.title).trim().length > 0
+      ? p.title
+      : parentAuthor
+      ? `Comment on @${parentAuthor}`
+      : '';
+
   return {
     id: p.id,
     author: p.author,
     authorReputation: p.author_reputation,
     permlink: p.permlink,
-    title: p.title,
+    title: resolvedTitle,
     body,
     category: p.category,
     created: p.created,
@@ -232,6 +345,8 @@ function mapRawDiscussionToPostItem(
     isSteemExclusive,
     isVideoPost,
     language,
+    isComment,
+    ...(parentAuthor ? { parentAuthor } : {}),
   } as PostItem;
 }
 
@@ -758,10 +873,12 @@ export async function fetchCurationIntelligence(
   }
 
   const histories = await Promise.allSettled(
-    CURATION_ACCOUNTS.map((acc) =>
-      safeCall<any[]>('condenser_api.get_account_history', [acc, -1, 500])
-    )
+    CURATION_ACCOUNTS.map((acc) => fetchAccountHistoryWindow(acc, cutoffMs, 15))
   );
+
+  const ambiguousVotes: [string, string][] = [];
+  const ambiguousSeen = new Set<string>();
+  const allVoteTargets: { author: string; permlink: string }[] = [];
 
   for (let i = 0; i < histories.length; i++) {
     const res = histories[i];
@@ -783,15 +900,19 @@ export async function fetchCurationIntelligence(
 
       const targetAuthor = String(opData.author || '').toLowerCase();
       const targetPermlink = String(opData.permlink || '');
-      if (!targetAuthor) continue;
+      if (!targetAuthor || !targetPermlink) continue;
 
       totalVotes++;
       if (teamRecord) teamRecord.totalVotes++;
+      allVoteTargets.push({ author: targetAuthor, permlink: targetPermlink });
 
-      if (targetPermlink.startsWith('re-')) {
-        commentVotes++;
-      } else {
-        postVotes++;
+      // Condenser comments often use 6-char random slugs rather than 're-'
+      if (targetPermlink.startsWith('re-') || targetPermlink.length <= 12) {
+        const key = `${targetAuthor}/${targetPermlink}`;
+        if (!ambiguousSeen.has(key)) {
+          ambiguousSeen.add(key);
+          ambiguousVotes.push([targetAuthor, targetPermlink]);
+        }
       }
 
       const isOwnTeam = myTeamMembers ? myTeamMembers.has(targetAuthor) : false;
@@ -817,6 +938,38 @@ export async function fetchCurationIntelligence(
       }
 
       authorCounts.set(targetAuthor, (authorCounts.get(targetAuthor) || 0) + 1);
+    }
+  }
+
+  // Accurately resolve comment vs post status via database_api.find_comments in batches of 100
+  const confirmedComments = new Set<string>();
+  if (ambiguousVotes.length > 0) {
+    const chunkCalls: Promise<any>[] = [];
+    for (let offset = 0; offset < ambiguousVotes.length; offset += 100) {
+      chunkCalls.push(
+        safeCall<{ comments: any[] }>('database_api.find_comments', {
+          comments: ambiguousVotes.slice(offset, offset + 100),
+        })
+      );
+    }
+    const chunkResults = await Promise.allSettled(chunkCalls);
+    for (const r of chunkResults) {
+      if (r.status === 'fulfilled' && Array.isArray(r.value?.comments)) {
+        for (const c of r.value.comments) {
+          if (c && (c.parent_author || Number(c.depth || 0) > 0)) {
+            confirmedComments.add(`${String(c.author).toLowerCase()}/${c.permlink}`);
+          }
+        }
+      }
+    }
+  }
+
+  for (const target of allVoteTargets) {
+    const key = `${target.author}/${target.permlink}`;
+    if (confirmedComments.has(key) || target.permlink.startsWith('re-')) {
+      commentVotes++;
+    } else {
+      postVotes++;
     }
   }
 
@@ -904,76 +1057,143 @@ export async function fetchCurationIntelligence(
   };
 }
 
+export interface TeamOnChainCurationData {
+  items: PostItem[]; // All curated posts and comments in the window
+  posts: PostItem[]; // Top-level posts only (for Top 7 Candidate Picker)
+  postsCount: number;
+  commentsCount: number;
+  feedbackCommentsCount: number;
+  uniqueAuthorsGuided: number;
+}
+
 /**
- * Fetches actual on-chain curated posts for a specific team account over the last N days.
- * Reads condenser_api.get_account_history, extracts vote targets (excluding comments),
- * fetches discussions via condenser_api.get_content, and resolves community titles.
+ * Fetches complete N-day on-chain curation activity for a specific team account.
+ * Pages backwards through condenser_api.get_account_history in compliant 100-op batches,
+ * captures ALL positive votes (both top-level posts and comments) plus team feedback comments,
+ * and batch-fetches content via JSON-RPC batching.
  */
-export async function fetchTeamOnChainCuratedPosts(
+export async function fetchTeamOnChainCurationData(
   account: string,
   days = 7,
-  limit = 20
-): Promise<PostItem[]> {
+  limit = 500
+): Promise<TeamOnChainCurationData> {
+  const empty: TeamOnChainCurationData = {
+    items: [],
+    posts: [],
+    postsCount: 0,
+    commentsCount: 0,
+    feedbackCommentsCount: 0,
+    uniqueAuthorsGuided: 0,
+  };
+
   const cutoffMs = Date.now() - days * 24 * 3600 * 1000;
-  const targetPosts: { author: string; permlink: string }[] = [];
-  const seen = new Set<string>();
+  const targets: { author: string; permlink: string }[] = [];
+  const seenVotes = new Set<string>();
+  const seenFeedbackComments = new Set<string>();
+  const guidedAuthors = new Set<string>();
 
   try {
-    const history = await safeCall<any[]>('condenser_api.get_account_history', [account, -1, 400]);
-    if (!Array.isArray(history)) return [];
+    const history = await fetchAccountHistoryWindow(account, cutoffMs, 30);
+    if (!Array.isArray(history) || history.length === 0) return empty;
 
-    for (let i = history.length - 1; i >= 0; i--) {
-      const [, item] = history[i];
+    for (const [, item] of history) {
       const ts = Date.parse(`${item.timestamp}Z`);
       if (Number.isNaN(ts) || ts < cutoffMs) continue;
 
       const [opName, opData] = item.op || [];
-      if (opName !== 'vote' || opData?.voter !== account || (opData?.weight ?? 0) <= 0) {
-        continue;
-      }
 
-      const author = String(opData.author || '').toLowerCase();
-      const permlink = String(opData.permlink || '');
-      if (!author || !permlink || permlink.startsWith('re-')) continue;
+      if (opName === 'vote' && opData?.voter === account && (opData?.weight ?? 0) > 0) {
+        const author = String(opData.author || '').toLowerCase();
+        const permlink = String(opData.permlink || '');
+        if (!author || !permlink) continue;
 
-      const key = `${author}/${permlink}`;
-      if (!seen.has(key)) {
-        seen.add(key);
-        targetPosts.push({ author, permlink });
-        if (targetPosts.length >= limit) break;
+        const key = `${author}/${permlink}`;
+        if (!seenVotes.has(key) && targets.length < limit) {
+          seenVotes.add(key);
+          targets.push({ author, permlink });
+        }
+      } else if (
+        opName === 'comment' &&
+        opData?.author === account &&
+        opData?.parent_author &&
+        opData.parent_author !== account
+      ) {
+        const targetKey = `${String(opData.parent_author).toLowerCase()}/${opData.parent_permlink || ''}`;
+        if (!seenFeedbackComments.has(targetKey)) {
+          seenFeedbackComments.add(targetKey);
+          guidedAuthors.add(String(opData.parent_author).toLowerCase());
+        }
       }
     }
   } catch (err) {
     console.warn(`Could not fetch account history for ${account}:`, err);
-    return [];
+    return empty;
   }
 
-  if (targetPosts.length === 0) return [];
+  if (targets.length === 0) {
+    return {
+      ...empty,
+      feedbackCommentsCount: seenFeedbackComments.size,
+      uniqueAuthorsGuided: guidedAuthors.size,
+    };
+  }
 
-  // Fetch full post content for these targets in parallel
-  const postResults = await Promise.allSettled(
-    targetPosts.map((t) => safeCall<any>('condenser_api.get_content', [t.author, t.permlink]))
-  );
+  // Batch fetch full content via JSON-RPC batching (40 items per HTTP call)
+  const batchRequests = targets.map((t) => ({
+    method: 'condenser_api.get_content',
+    params: [t.author, t.permlink],
+  }));
+  const rawResults = await batchRpcCall<any>(batchRequests, 40);
 
-  const rawPosts: any[] = [];
-  for (const res of postResults) {
-    if (res.status === 'fulfilled' && res.value && res.value.author && res.value.title) {
-      rawPosts.push(res.value);
+  const rawItems: any[] = [];
+  for (const raw of rawResults) {
+    if (raw && raw.author && !isNsfwPost(raw)) {
+      rawItems.push(raw);
     }
   }
 
-  const validRaw = rawPosts.filter((raw) => !isNsfwPost(raw));
-  if (validRaw.length === 0) return [];
+  if (rawItems.length === 0) {
+    return {
+      ...empty,
+      feedbackCommentsCount: seenFeedbackComments.size,
+      uniqueAuthorsGuided: guidedAuthors.size,
+    };
+  }
 
   // Resolve community titles
-  const categories = validRaw.map((p) => String(p.category || ''));
+  const categories = rawItems.map((p) => String(p.category || ''));
   const communityTitles = await fetchCommunityTitles(categories);
   const now = Date.now();
   const claimsMap = new Map<string, CurationClaim>();
 
-  return validRaw
+  const items = rawItems
     .map((raw) => mapRawDiscussionToPostItem(raw, now, claimsMap, communityTitles))
     .filter((p) => !isNsfwPost(p));
+
+  const posts = items.filter((p) => !p.isComment);
+  const commentsCount = items.length - posts.length;
+
+  return {
+    items,
+    posts,
+    postsCount: posts.length,
+    commentsCount,
+    feedbackCommentsCount: seenFeedbackComments.size,
+    uniqueAuthorsGuided: guidedAuthors.size,
+  };
+}
+
+/**
+ * Fetches actual on-chain curated posts for a specific team account over the last N days.
+ * Backwards-compatible wrapper returning all curated top-level posts.
+ */
+export async function fetchTeamOnChainCuratedPosts(
+  account: string,
+  days = 7,
+  limit = 500
+): Promise<PostItem[]> {
+  const data = await fetchTeamOnChainCurationData(account, days, limit);
+  return data.posts;
 }
 
 /**

@@ -44,6 +44,23 @@ export interface ReportConfig {
   }[];
   reachMetrics?: CurationReachSummary;
   clubDistribution?: ClubDistributionSummary;
+  onChainMentorship?: {
+    feedbackCommentsCount: number;
+    uniqueAuthorsGuided: number;
+  };
+}
+
+function computeGiniIndex(values: number[]): number {
+  const n = values.length;
+  if (n <= 1) return 0;
+  const sorted = [...values].sort((a, b) => a - b);
+  const sum = sorted.reduce((acc, v) => acc + v, 0);
+  if (sum === 0) return 0;
+  let weightedSum = 0;
+  for (let i = 0; i < n; i++) {
+    weightedSum += (2 * (i + 1) - n - 1) * sorted[i];
+  }
+  return Math.max(0, Math.min(1, weightedSum / (n * sum)));
 }
 
 /**
@@ -73,15 +90,26 @@ export function generateSteemPodReport(config: ReportConfig): string {
     mentoredPosts,
     reachMetrics,
     clubDistribution,
+    onChainMentorship,
   } = config;
   const activeReachMetrics = reachMetrics;
 
   const totalVotes = allCuratedPosts.length;
-  const uniqueAuthors = new Set(allCuratedPosts.map((p) => p.author.toLowerCase())).size;
+  const authorVoteCounts = new Map<string, number>();
+  for (const p of allCuratedPosts) {
+    const a = p.author.toLowerCase();
+    authorVoteCounts.set(a, (authorVoteCounts.get(a) || 0) + 1);
+  }
+  const uniqueAuthors = authorVoteCounts.size;
+  const teamGini = computeGiniIndex(Array.from(authorVoteCounts.values()));
 
-  // Separate posts vs comments curated
+  // Separate posts vs comments curated accurately via parentAuthor / isComment flag
   const commentCurations = allCuratedPosts.filter(
-    (p) => p.permlink.startsWith('re-') || p.category.startsWith('re-')
+    (p) =>
+      Boolean(p.isComment) ||
+      Boolean(p.parentAuthor) ||
+      p.permlink.startsWith('re-') ||
+      p.category.startsWith('re-')
   ).length;
   const postCurations = totalVotes - commentCurations;
 
@@ -158,15 +186,25 @@ export function generateSteemPodReport(config: ReportConfig): string {
   md += `| **Unique Creators Reached** | **${uniqueAuthors}** | Broad Community Inclusivity |\n`;
   md += `| **Average Curation Frequency** | ${(totalVotes / (uniqueAuthors || 1)).toFixed(2)}x votes / author | Balanced Repeat Rate |\n`;
   md += `| **Diary Game Share** | **${diaryStatus}** | Steemit Policy Cap: &le; 30% |\n`;
-  md += `| **Creators Mentored / Guided** | **${mentoredPosts.length}** | Quality Elevation via Feedback |\n`;
+  const guidedCount = Math.max(
+    mentoredPosts.length,
+    onChainMentorship?.uniqueAuthorsGuided ?? 0
+  );
+  const feedbackTotal = onChainMentorship?.feedbackCommentsCount ?? 0;
+  const mentoredDisplay =
+    feedbackTotal > 0
+      ? `**${guidedCount}** (${feedbackTotal} feedback comments)`
+      : `**${mentoredPosts.length}**`;
+  md += `| **Creators Mentored / Guided** | ${mentoredDisplay} | Quality Elevation via Feedback |\n`;
 
   if (activeReachMetrics) {
-    const reachPct =
-      activeReachMetrics.totalActiveAuthors > 0
-        ? ((activeReachMetrics.authorsCurated / activeReachMetrics.totalActiveAuthors) * 100).toFixed(1)
-        : '0.0';
-    md += `| **Network Author Reach (Steemit Team Metric)** | ${activeReachMetrics.authorsCurated} / ${activeReachMetrics.totalActiveAuthors} (${reachPct}%) | Active Global Steem Authors |\n`;
-    md += `| **Vote Distribution Gini Index** | **${activeReachMetrics.giniCoefficient.toFixed(3)}** | Target &le; 0.48 (Low Inequality) |\n`;
+    const ecosystemAuthors = Math.max(uniqueAuthors, activeReachMetrics.authorsCurated);
+    const teamReachPct =
+      ecosystemAuthors > 0 ? ((uniqueAuthors / ecosystemAuthors) * 100).toFixed(1) : '0.0';
+    md += `| **Network Author Reach (Steemit Team Metric)** | ${uniqueAuthors} / ${ecosystemAuthors} (${teamReachPct}% of ecosystem) | Share of Active Curated Authors |\n`;
+    md += `| **Vote Distribution Gini Index** | **${teamGini.toFixed(3)}** (Network: ${activeReachMetrics.giniCoefficient.toFixed(3)}) | Target &le; 0.48 (Low Inequality) |\n`;
+  } else {
+    md += `| **Vote Distribution Gini Index** | **${teamGini.toFixed(3)}** | Target &le; 0.48 (Low Inequality) |\n`;
   }
   md += `\n---\n\n`;
 
