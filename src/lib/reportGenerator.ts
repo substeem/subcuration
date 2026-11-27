@@ -1,7 +1,6 @@
 import {
   ALL_CURATOR_MEMBERS,
   isDiaryPost,
-  STEEM_REPORT_LOGO_URL,
   STEEM_REPORT_FALLBACK_IMAGE,
 } from './constants';
 import type { PostItem } from '../types';
@@ -75,6 +74,16 @@ export function buildCleanSteemUrl(post: Pick<PostItem, 'category' | 'author' | 
 
 function escapeTableCell(text: string): string {
   return text.replace(/\|/g, '\\|').replace(/\r?\n/g, ' ').trim();
+}
+
+function escapeHtmlAttr(text: string): string {
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/"/g, '&quot;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/\r?\n/g, ' ')
+    .trim();
 }
 
 export function generateSteemPodReport(config: ReportConfig): string {
@@ -168,12 +177,11 @@ export function generateSteemPodReport(config: ReportConfig): string {
   const clubTotal = c100 + c75 + c5050 + cless || totalVotes || 1;
 
   // ==================== REPORT MARKDOWN BUILDER ====================
-  let md = `<center>![Olo Curation Hub Logo](${STEEM_REPORT_LOGO_URL})</center>\n\n`;
-  md += `# <center>🏆 Community Curation Weekly Report: ${teamName} (@${account})</center>\n`;
+  let md = `# <center>🏆 Community Curation Weekly Report: ${teamName} (@${account})</center>\n`;
   md += `### <center>📅 Week #${weekNumber} — ${monthName} ${year}</center>\n\n`;
-  md += `<center>**Curator Shift Roster:** ${curatorMembers.map((m) => `@${m}`).join(', ')}</center>\n\n`;
+  md += `<center><strong>Curator Shift Roster:</strong> ${curatorMembers.map((m) => `@${m}`).join(', ')}</center>\n\n`;
 
-  md += `Throughout this curation week, **${teamName}** actively scouted, reviewed, and supported high-effort, original content across the Steem blockchain using the **Olo Curation Hub**. Guided by strict adherence to Steemit guidelines—enforcing original creator attribution, active club participation (Club5050 / Club75 / Club100), zero-tolerance for plagiarism or AI generation, and constructive author mentorship—we proudly present our verified weekly curation report.\n\n`;
+  md += `Throughout this curation week, **${teamName}** actively scouted, reviewed, and supported high-effort, original content across the Steem blockchain. Guided by strict adherence to Steemit guidelines—enforcing original creator attribution, active club participation (Club5050 / Club75 / Club100), zero-tolerance for plagiarism or AI generation, and constructive author mentorship—we proudly present our verified weekly curation report.\n\n`;
   md += `---\n\n`;
 
   // 1. Weekly Performance & Network Reach Metrics
@@ -270,9 +278,12 @@ export function generateSteemPodReport(config: ReportConfig): string {
         body: pick.post.body,
         json_metadata: pick.post.json_metadata,
       });
-      const coverUrl = images[0] || STEEM_REPORT_FALLBACK_IMAGE;
+      const rawCover = images[0] || STEEM_REPORT_FALLBACK_IMAGE;
+      const coverUrl = rawCover.startsWith('http://')
+        ? rawCover.replace(/^http:\/\//i, 'https://')
+        : rawCover;
 
-      md += `<center>![${escapeTableCell(pick.post.title)}](${coverUrl})</center>\n\n`;
+      md += `<center><img src="${coverUrl}" alt="${escapeHtmlAttr(pick.post.title)}" /></center>\n\n`;
       md += `### Selection #${idx + 1}: [${escapeTableCell(pick.post.title)}](${cleanUrl})\n\n`;
 
       md += `* **Author:** @${pick.post.author} (Reputation: ${rep})${

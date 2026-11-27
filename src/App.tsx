@@ -1221,7 +1221,7 @@ export function App() {
                   </h2>
                 </div>
                 <p className="text-xs text-slate-600 dark:text-slate-400 max-w-2xl [text-wrap:pretty]">
-                  Non-curator, high-effort content sitting under $0.50 STU—sorted by expiry urgency so overlooked writers get rescued before payout closes.
+                  Non-curator, high-effort content sitting under $1.00 STU—sorted by expiry urgency so overlooked writers get rescued before payout closes.
                 </p>
               </div>
               <div className="flex flex-wrap items-center gap-2.5 shrink-0">
@@ -1299,6 +1299,7 @@ export function App() {
                       onInspect={handleInspectPost}
                       onClaim={handleClaimPost}
                       onQuickMentorship={handleQuickMentorship}
+                      onDismiss={handleDismissPost}
                       currentUser={currentUser}
                       isAuthorizedCurator={isAuthorizedCurator}
                       theme={theme}

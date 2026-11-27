@@ -192,19 +192,19 @@ export const Header: React.FC<HeaderProps> = ({
                   ? 'bg-slate-900 border-slate-700/80 text-slate-200 hover:border-slate-600'
                   : 'bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100'
               }`}
-              title="Inspect live Voting Power for all 11 curation accounts"
+              title={`Inspect live Voting Power for all ${teamAccounts.length || 13} curation accounts`}
             >
-              <Activity className="w-3.5 h-3.5 text-teal-400" />
-              <span className="hidden md:inline text-slate-400">{vpSummaryLabel}:</span>
+              <Activity className="w-3.5 h-3.5 text-teal-600 dark:text-teal-400" />
+              <span className="hidden md:inline text-slate-500 dark:text-slate-400">{vpSummaryLabel}:</span>
               <span
                 className={`font-bold tabular-nums ${
                   vpSummaryValue === null
                     ? 'text-slate-400'
                     : vpSummaryValue >= 85
-                    ? 'text-emerald-400'
+                    ? 'text-emerald-700 dark:text-emerald-400'
                     : vpSummaryValue >= 70
-                    ? 'text-amber-400'
-                    : 'text-rose-400'
+                    ? 'text-amber-700 dark:text-amber-400'
+                    : 'text-rose-700 dark:text-rose-400'
                 }`}
               >
                 {vpSummaryValue !== null ? `${vpSummaryValue}%` : '…'}
@@ -243,10 +243,10 @@ export const Header: React.FC<HeaderProps> = ({
                     {teamAccounts.map((t) => {
                       const vpColor =
                         t.currentVP >= 85
-                          ? 'text-emerald-400'
+                          ? 'text-emerald-700 dark:text-emerald-400'
                           : t.currentVP >= 70
-                          ? 'text-amber-400'
-                          : 'text-rose-400';
+                          ? 'text-amber-700 dark:text-amber-400'
+                          : 'text-rose-700 dark:text-rose-400';
                       const barColor =
                         t.currentVP >= 85
                           ? 'bg-emerald-500'
@@ -263,20 +263,20 @@ export const Header: React.FC<HeaderProps> = ({
                           }`}
                         >
                           <div className="flex items-center justify-between gap-1">
-                            <span className="truncate font-semibold text-slate-300 dark:text-slate-200">
+                            <span className="truncate font-semibold text-slate-800 dark:text-slate-200">
                               @{t.account}
                             </span>
                             <span className={`font-bold tabular-nums ${vpColor}`}>
                               {t.currentVP}%
                             </span>
                           </div>
-                          <div className="w-full h-1 rounded-full bg-slate-800/70 my-1.5 overflow-hidden">
+                          <div className="w-full h-1 rounded-full bg-slate-200 dark:bg-slate-800/70 my-1.5 overflow-hidden">
                             <div
                               className={`h-full rounded-full ${barColor}`}
                               style={{ width: `${Math.min(100, Math.max(0, t.currentVP))}%` }}
                             />
                           </div>
-                          <div className="flex items-center justify-between text-[10px] text-slate-400">
+                          <div className="flex items-center justify-between text-[10px] text-slate-500 dark:text-slate-400">
                             <span>{t.name}</span>
                             <span className="tabular-nums">${t.voteValue100.toFixed(2)}</span>
                           </div>
@@ -320,7 +320,7 @@ export const Header: React.FC<HeaderProps> = ({
                 >
                   <CheckCircle2 className="w-3 h-3 text-emerald-400" />@{currentUser}
                 </span>
-                <span className="text-[10px] font-mono text-teal-400">
+                <span className="text-[10px] font-mono text-teal-700 dark:text-teal-400">
                   {currentTeam ? currentTeam.name : 'Observer'}
                 </span>
               </div>
@@ -401,27 +401,31 @@ export const Header: React.FC<HeaderProps> = ({
           >
             <button
               onClick={() => !verifying && setShowLoginModal(false)}
-              className="absolute right-4 top-4 text-slate-400 hover:text-white"
+              className={`absolute right-4 top-4 ${isDark ? 'text-slate-400 hover:text-white' : 'text-slate-400 hover:text-slate-700'}`}
               aria-label="Close login modal"
             >
               <X className="w-4 h-4" />
             </button>
             <div className="flex items-center gap-2 mb-2">
-              <Key className="w-4 h-4 text-teal-400" />
+              <Key className="w-4 h-4 text-teal-600 dark:text-teal-400" />
               <h3 className="text-base font-bold tracking-tight">Curator Sign In</h3>
             </div>
-            <p className="text-xs text-slate-400 mb-4 [text-wrap:pretty]">
+            <p className={`text-xs mb-4 [text-wrap:pretty] ${isDark ? 'text-slate-400' : 'text-slate-600'}`}>
               Enter your Steem username. A posting-key buffer signature is verified via Steem Keychain with zero private key exposure.
             </p>
             {loginError && (
-              <div className="mb-3 p-2.5 rounded-xl bg-rose-950/80 border border-rose-800/70 text-rose-300 text-xs flex items-start gap-2">
+              <div className={`mb-3 p-2.5 rounded-xl border text-xs flex items-start gap-2 ${
+                isDark
+                  ? 'bg-rose-950/80 border-rose-800/70 text-rose-300'
+                  : 'bg-rose-50 border-rose-200 text-rose-800'
+              }`}>
                 <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
                 <span>{loginError}</span>
               </div>
             )}
             <form onSubmit={handleLoginSubmit} className="space-y-4">
               <div>
-                <label className="text-xs font-medium text-slate-300 block mb-1">
+                <label className={`text-xs font-medium block mb-1 ${isDark ? 'text-slate-300' : 'text-slate-700'}`}>
                   Steem Account
                 </label>
                 <div className="relative">

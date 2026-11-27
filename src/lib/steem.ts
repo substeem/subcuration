@@ -400,6 +400,7 @@ export async function fetchRecentClaims(): Promise<Map<string, CurationClaim>> {
       )
     );
 
+    const collectedOps: { ts: string; trxId: string; payload: any }[] = [];
     for (const res of histories) {
       if (res.status !== 'fulfilled' || !Array.isArray(res.value)) continue;
       for (const [, item] of res.value) {
@@ -409,20 +410,29 @@ export async function fetchRecentClaims(): Promise<Map<string, CurationClaim>> {
         try {
           const payload = JSON.parse(opData.json);
           if (!payload.author || !payload.permlink) continue;
-          const key = `${payload.author}/${payload.permlink}`;
-
-          if (payload.action === 'release' || payload.action === 'unclaim') {
-            claimsMap.delete(key);
-          } else {
-            claimsMap.set(key, {
-              ...payload,
-              timestamp: item.timestamp,
-              txId: item.trx_id,
-            } as CurationClaim);
-          }
+          collectedOps.push({
+            ts: String(item.timestamp || ''),
+            trxId: String(item.trx_id || ''),
+            payload,
+          });
         } catch {
           // Skip malformed custom_json payloads
         }
+      }
+    }
+
+    // Apply chronologically so newer release/approve ops never get overwritten by older claims
+    collectedOps.sort((a, b) => a.ts.localeCompare(b.ts));
+    for (const op of collectedOps) {
+      const key = `${op.payload.author}/${op.payload.permlink}`;
+      if (op.payload.action === 'release' || op.payload.action === 'unclaim') {
+        claimsMap.delete(key);
+      } else {
+        claimsMap.set(key, {
+          ...op.payload,
+          timestamp: op.ts,
+          txId: op.trxId,
+        } as CurationClaim);
       }
     }
   } catch (error) {
@@ -612,17 +622,17 @@ export async function fetchRescueCandidates(
     return { posts: [], nextStartKey, hasMore: hasMore && Boolean(nextStartKey) };
   }
 
-  // Fetch full post discussions via condenser_api.get_content to obtain active_votes & pending_payout
-  const contentResults = await Promise.allSettled(
-    targetCandidates.slice(0, limit * 2).map((t) =>
-      safeCall<any>('condenser_api.get_content', [t.author, t.permlink])
-    )
-  );
+  // Batch-fetch full post discussions via JSON-RPC batching to obtain active_votes & pending_payout
+  const batchRequests = targetCandidates.slice(0, limit * 2).map((t) => ({
+    method: 'condenser_api.get_content',
+    params: [t.author, t.permlink],
+  }));
+  const contentResults = await batchRpcCall<any>(batchRequests, 40);
 
   const fullDiscussions: any[] = [];
-  for (const res of contentResults) {
-    if (res.status === 'fulfilled' && res.value && res.value.author && res.value.title) {
-      fullDiscussions.push(res.value);
+  for (const val of contentResults) {
+    if (val && val.author && val.title) {
+      fullDiscussions.push(val);
     }
   }
 

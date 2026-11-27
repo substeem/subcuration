@@ -125,12 +125,46 @@ export const PostCard: React.FC<PostCardProps> = ({
   const [imgIndex, setImgIndex] = useState(0);
   const [isFallbackActive, setIsFallbackActive] = useState(!hasAuthorImages);
   const [isLoaded, setIsLoaded] = useState(false);
+  const [isInView, setIsInView] = useState(false);
+  const coverRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     setImgIndex(0);
     setIsFallbackActive(!hasAuthorImages);
     setIsLoaded(false);
   }, [post.author, post.permlink, hasAuthorImages]);
+
+  useEffect(() => {
+    const el = coverRef.current;
+    if (!el || typeof IntersectionObserver === 'undefined') {
+      setIsInView(true);
+      return;
+    }
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) {
+          setIsInView(true);
+          observer.disconnect();
+        }
+      },
+      { rootMargin: '200px' }
+    );
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+
+  // Guard against hanging external image hosts once the card is visible
+  useEffect(() => {
+    if (!isInView || isLoaded || isFallbackActive) return;
+    const timer = window.setTimeout(() => {
+      if (imgIndex < images.length - 1) {
+        setImgIndex((prev) => prev + 1);
+      } else {
+        setIsFallbackActive(true);
+      }
+    }, 12000);
+    return () => window.clearTimeout(timer);
+  }, [isInView, isLoaded, isFallbackActive, imgIndex, images.length]);
 
   const activeImageUrl = useMemo(() => {
     if (isFallbackActive || !hasAuthorImages || imgIndex >= images.length) {
@@ -156,6 +190,11 @@ export const PostCard: React.FC<PostCardProps> = ({
     !isBotOrSpam &&
     !post.curatorVoted &&
     post.pendingPayout >= OPPORTUNITY_MAX_PAYOUT;
+  const zone1ShowsExpiry =
+    !isBotOrSpam &&
+    post.claim?.status !== 'needs_revision' &&
+    post.claim?.status !== 'approved' &&
+    isExpiringSoon;
 
   return (
     <article
@@ -165,6 +204,7 @@ export const PostCard: React.FC<PostCardProps> = ({
     >
       {/* Cover Image Slot — Uniform height across all cards */}
       <div
+        ref={coverRef}
         role="button"
         tabIndex={0}
         onClick={() => _onInspect(post)}
@@ -186,7 +226,25 @@ export const PostCard: React.FC<PostCardProps> = ({
           alt={post.title}
           loading="lazy"
           decoding="async"
-          onLoad={() => setIsLoaded(true)}
+          onLoad={(e) => {
+            const { naturalWidth, naturalHeight } = e.currentTarget;
+            // Skip tiny divider lines, tracking pixels, or corrupt 0-byte images
+            if (
+              !isFallbackActive &&
+              (naturalWidth === 0 ||
+                naturalHeight < 16 ||
+                (naturalWidth < 32 && naturalHeight < 32))
+            ) {
+              if (imgIndex < images.length - 1) {
+                setImgIndex((prev) => prev + 1);
+              } else {
+                setIsFallbackActive(true);
+                e.currentTarget.src = DEFAULT_POST_FALLBACK_IMAGE;
+              }
+              return;
+            }
+            setIsLoaded(true);
+          }}
           onError={(e) => {
             if (isFallbackActive) return;
             // Advance to next candidate if available, else switch to guaranteed mascot fallback
@@ -211,10 +269,10 @@ export const PostCard: React.FC<PostCardProps> = ({
       {/* Card Body */}
       <div className="flex flex-1 flex-col p-4">
         {/* Zone 1: Overline — Community + Curation Tags + Status Cue */}
-        <div className="mb-1.5 flex items-center justify-between gap-2 text-xs">
-          <div className="flex items-center gap-1.5 truncate">
+        <div className="mb-1.5 flex items-center justify-between gap-2 text-xs min-w-0">
+          <div className="flex items-center gap-1.5 min-w-0 overflow-hidden">
             <span
-              className="truncate font-medium text-slate-500 dark:text-slate-400"
+              className="truncate min-w-[60px] font-medium text-slate-500 dark:text-slate-400"
               title={`#${post.category}`}
             >
               {communityLabel}
@@ -377,7 +435,7 @@ export const PostCard: React.FC<PostCardProps> = ({
           )}
           <span aria-hidden="true">·</span>
           <span className="shrink-0 tabular-nums">{formattedTime}</span>
-          {isExpiringSoon && (
+          {isExpiringSoon && !zone1ShowsExpiry && (
             <>
               <span aria-hidden="true">·</span>
               <span

@@ -41,7 +41,7 @@ import {
   fetchTeamOnChainCurationData,
   fetchPostBySteemUrl,
 } from '../lib/steem';
-import { getCachedClubStatus } from '../lib/clubCalculator';
+import { getCachedClubStatus, calculateClubStatus } from '../lib/clubCalculator';
 import { formatSteemReputation, extractPostImages } from '../lib/textUtils';
 
 const reportSanitizeSchema = {
@@ -228,8 +228,12 @@ export const ReportView: React.FC<ReportViewProps> = ({
     try {
       const fetched = await fetchPostBySteemUrl(searchQuery.trim());
       if (fetched) {
-        // Add to candidates list at top
+        // Add to candidates list and all items at top
         setOnChainCandidates((prev) => {
+          const key = `${fetched.author}/${fetched.permlink}`;
+          return [fetched, ...prev.filter((p) => `${p.author}/${p.permlink}` !== key)];
+        });
+        setOnChainAllItems((prev) => {
           const key = `${fetched.author}/${fetched.permlink}`;
           return [fetched, ...prev.filter((p) => `${p.author}/${p.permlink}` !== key)];
         });
@@ -385,6 +389,23 @@ export const ReportView: React.FC<ReportViewProps> = ({
         }
       }
 
+      // Resolve real club status for Top 7 selections if missing
+      const resolvedTop7 = await Promise.all(
+        top7.map(async (pick) => {
+          if (pick.post.clubStatus) return pick;
+          const cached = getCachedClubStatus(pick.post.author);
+          if (cached) {
+            return { ...pick, post: { ...pick.post, clubStatus: cached } };
+          }
+          try {
+            const clubStatus = await calculateClubStatus(pick.post.author);
+            return { ...pick, post: { ...pick.post, clubStatus } };
+          } catch {
+            return pick;
+          }
+        })
+      );
+
       // Include all curated items (posts + comments) from 7-day on-chain history + feed + Top 7
       const verifiedPostMap = new Map<string, PostItem>();
       const addItem = (p: PostItem) => {
@@ -393,7 +414,7 @@ export const ReportView: React.FC<ReportViewProps> = ({
       };
       for (const p of onChainAllItems) addItem(p);
       for (const p of feedTeamVotedPosts) addItem(p);
-      for (const pick of top7) addItem(pick.post);
+      for (const pick of resolvedTop7) addItem(pick.post);
 
       // Auto-compute club distribution from cached audits or post tags
       let club100 = 0, club75 = 0, club5050 = 0, clubless = 0;
@@ -418,7 +439,7 @@ export const ReportView: React.FC<ReportViewProps> = ({
         weekNumber,
         monthName,
         year: 2026,
-        topSevenPicks: top7,
+        topSevenPicks: resolvedTop7,
         allCuratedPosts: Array.from(verifiedPostMap.values()),
         mentoredPosts: mentoredEntries,
         onChainMentorship,
@@ -932,17 +953,23 @@ export const ReportView: React.FC<ReportViewProps> = ({
                   remarkPlugins={[remarkGfm]}
                   rehypePlugins={[rehypeRaw, [rehypeSanitize, reportSanitizeSchema]]}
                   components={{
-                    img: ({ src = '', alt = '' }) => (
-                      <img
-                        src={src}
-                        alt={alt}
-                        loading="lazy"
-                        className="max-h-[360px] w-auto max-w-full rounded-xl object-contain my-3 mx-auto shadow-xs"
-                        onError={(e) => {
-                          e.currentTarget.src = DEFAULT_POST_FALLBACK_IMAGE;
-                        }}
-                      />
-                    ),
+                    img: ({ src = '', alt = '' }) => {
+                      const secureSrc = src.startsWith('http://')
+                        ? src.replace(/^http:\/\//i, 'https://')
+                        : src;
+                      return (
+                        <img
+                          src={secureSrc}
+                          alt={alt}
+                          loading="eager"
+                          decoding="async"
+                          className="max-h-[360px] w-auto max-w-full rounded-xl object-contain my-3 mx-auto shadow-xs"
+                          onError={(e) => {
+                            e.currentTarget.src = DEFAULT_POST_FALLBACK_IMAGE;
+                          }}
+                        />
+                      );
+                    },
                     table: ({ children }) => (
                       <div className="overflow-x-auto my-3">
                         <table className="min-w-full divide-y divide-slate-200 dark:divide-slate-800 text-left text-xs">
